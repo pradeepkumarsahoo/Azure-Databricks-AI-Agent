@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>PolicyPilot Architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* ── Tokens ─────────────────────────────────────────────────────── */
+:root {
+  --bg:       #f2f4f8;
+  --surface:  #ffffff;
+  --surface2: #f8f9fb;
+  --fg:       #141724;
+  --fg-2:     #525c74;
+  --fg-3:     #8691a8;
+  --border:   #dde1ea;
+  --shadow:   0 1px 3px rgba(14,20,40,.06), 0 4px 14px rgba(14,20,40,.05);
+
+  /* Layer accent colors */
+  --c-ingest:  #0369a1;
+  --c-store:   #047857;
+  --c-agent:   #4338ca;
+  --c-llm:     #b45309;
+  --c-ui:      #7c3aed;
+  --c-infra:   #374151;
+
+  /* Environment pill colors */
+  --c-local:  #1d4ed8;
+  --c-cloud:  #0891b2;
+
+  --r-card: 10px;
+  --r-module: 6px;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:       #0b0d14;
+    --surface:  #13161f;
+    --surface2: #191c27;
+    --fg:       #e4e7f0;
+    --fg-2:     #8891a8;
+    --fg-3:     #555f76;
+    --border:   #22273a;
+    --shadow:   0 1px 3px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.3);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:       #0b0d14;
+  --surface:  #13161f;
+  --surface2: #191c27;
+  --fg:       #e4e7f0;
+  --fg-2:     #8891a8;
+  --fg-3:     #555f76;
+  --border:   #22273a;
+  --shadow:   0 1px 3px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.3);
+  color-scheme: dark;
+}
+
+/* ── Reset & base ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  padding-block: 2.5rem;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  line-height: 1.5;
+  min-height: 100%;
+}
+
+/* ── Page header ────────────────────────────────────────────────── */
+.page-header {
+  max-width: 860px;
+  margin: 0 auto 2.5rem;
+}
+
+.page-header h1 {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: -.035em;
+  line-height: 1.1;
+  margin-bottom: .35rem;
+  text-wrap: balance;
+}
+
+.page-header .tagline {
+  font-size: .95rem;
+  color: var(--fg-2);
+  margin-bottom: 1rem;
+  max-width: 56ch;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+}
+
+.chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .68rem;
+  font-weight: 500;
+  padding: .22em .65em;
+  border-radius: 4px;
+  border: 1px solid;
+  letter-spacing: .02em;
+}
+
+.chip-blue   { color: #2563eb; border-color: #93c5fd; background: #eff6ff; }
+.chip-indigo { color: #4338ca; border-color: #a5b4fc; background: #eef2ff; }
+.chip-green  { color: #047857; border-color: #6ee7b7; background: #ecfdf5; }
+.chip-amber  { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
+.chip-violet { color: #6d28d9; border-color: #c4b5fd; background: #f5f3ff; }
+
+.end-to-end {
+  font-size: .9rem;
+  color: var(--fg-2);
+  line-height: 1.65;
+  max-width: 72ch;
+  margin-bottom: 1rem;
+  padding: .75rem 1rem;
+  background: var(--surface);
+  border-left: 3px solid var(--c-agent);
+  border-radius: 0 var(--r-module) var(--r-module) 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chip-blue   { color: #93c5fd; border-color: #1e3a5f; background: #0d1e35; }
+  :root:not([data-theme="light"]) .chip-indigo { color: #a5b4fc; border-color: #312e81; background: #13113a; }
+  :root:not([data-theme="light"]) .chip-green  { color: #6ee7b7; border-color: #064e3b; background: #022c22; }
+  :root:not([data-theme="light"]) .chip-amber  { color: #fcd34d; border-color: #78350f; background: #2c1a02; }
+  :root:not([data-theme="light"]) .chip-violet { color: #c4b5fd; border-color: #4c1d95; background: #1d1038; }
+}
+:root[data-theme="dark"] .chip-blue   { color: #93c5fd; border-color: #1e3a5f; background: #0d1e35; }
+:root[data-theme="dark"] .chip-indigo { color: #a5b4fc; border-color: #312e81; background: #13113a; }
+:root[data-theme="dark"] .chip-green  { color: #6ee7b7; border-color: #064e3b; background: #022c22; }
+:root[data-theme="dark"] .chip-amber  { color: #fcd34d; border-color: #78350f; background: #2c1a02; }
+:root[data-theme="dark"] .chip-violet { color: #c4b5fd; border-color: #4c1d95; background: #1d1038; }
+
+/* ── Diagram shell ─────────────────────────────────────────────── */
+.diagram {
+  max-width: 860px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Flow connector ─────────────────────────────────────────────── */
+.flow-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: .15rem 0;
+  color: var(--fg-3);
+  font-size: .85rem;
+  gap: 0;
+  line-height: 1;
+}
+
+.flow-arrow span { display: block; line-height: 1; }
+
+/* ── Layer card ─────────────────────────────────────────────────── */
+.layer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.layer-head {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .5rem .9rem;
+  color: #fff;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.layer-head .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.55);
+  flex-shrink: 0;
+}
+
+.layer-body {
+  padding: .9rem;
+}
+
+/* Layer color themes */
+.layer-ingest .layer-head  { background: var(--c-ingest); }
+.layer-store  .layer-head  { background: var(--c-store); }
+.layer-agent  .layer-head  { background: var(--c-agent); }
+.layer-llm    .layer-head  { background: var(--c-llm); }
+.layer-ui     .layer-head  { background: var(--c-ui); }
+.layer-infra  .layer-head  { background: var(--c-infra); }
+
+/* ── Module boxes ──────────────────────────────────────────────── */
+.modules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  align-items: stretch;
+}
+
+.module {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-module);
+  padding: .6rem .8rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.module-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .78rem;
+  font-weight: 500;
+  color: var(--fg);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.module-label {
+  font-size: .7rem;
+  color: var(--fg-2);
+  margin-top: .18rem;
+  display: block;
+  line-height: 1.35;
+}
+
+.inline-arrow {
+  font-size: 1.1rem;
+  color: var(--fg-3);
+  flex-shrink: 0;
+  align-self: center;
+  padding: 0 .1rem;
+}
+
+/* ── Pipeline (5-node agent) ────────────────────────────────────── */
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-module);
+  overflow: hidden;
+}
+
+.pipe-node {
+  flex: 1;
+  min-width: 130px;
+  padding: .65rem .75rem;
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+
+.pipe-node:last-child { border-right: none; }
+
+.pipe-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .78rem;
+  font-weight: 500;
+  color: var(--fg);
+  display: block;
+}
+
+.pipe-detail {
+  font-size: .68rem;
+  color: var(--fg-2);
+  margin-top: .18rem;
+  display: block;
+  line-height: 1.3;
+}
+
+.pipe-arrow {
+  position: absolute;
+  right: -.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--fg-3);
+  font-size: .75rem;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.pipe-node:last-child .pipe-arrow { display: none; }
+
+@media (max-width: 540px) {
+  .pipeline { flex-direction: column; }
+  .pipe-node { border-right: none; border-bottom: 1px solid var(--border); }
+  .pipe-node:last-child { border-bottom: none; }
+  .pipe-arrow { right: auto; left: 50%; top: auto; bottom: -.5rem; transform: translateX(-50%); content: "↓"; }
+}
+
+/* ── Split two-column sections ──────────────────────────────────── */
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .65rem;
+}
+
+@media (max-width: 520px) {
+  .split { grid-template-columns: 1fr; }
+}
+
+.env {
+  border: 1px solid var(--border);
+  border-radius: var(--r-module);
+  overflow: hidden;
+}
+
+.env-head {
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  padding: .28rem .7rem;
+  color: #fff;
+}
+
+.env-head.local { background: var(--c-local); }
+.env-head.cloud { background: var(--c-cloud); }
+
+.env-body {
+  padding: .6rem .7rem;
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+  background: var(--surface2);
+}
+
+.env-body .module {
+  flex: none;
+}
+
+/* ── Sub-group within a layer body ─────────────────────────────── */
+.sub-group {
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+}
+
+.sub-label {
+  font-size: .65rem;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  margin-bottom: -.15rem;
+}
+
+/* ── Infra row (horizontal chips) ───────────────────────────────── */
+.infra-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .55rem;
+  align-items: center;
+}
+
+.infra-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-module);
+  padding: .45rem .75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.infra-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .74rem;
+  font-weight: 500;
+  color: var(--fg);
+  display: block;
+}
+
+.infra-detail {
+  font-size: .67rem;
+  color: var(--fg-2);
+  display: block;
+  margin-top: .15rem;
+}
+
+/* ── Section sub-divider ────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: .7rem 0;
+}
+
+/* ── Accent borders ─────────────────────────────────────────────── */
+.module.accent-ingest { border-left: 3px solid var(--c-ingest); }
+.module.accent-store  { border-left: 3px solid var(--c-store);  }
+.module.accent-agent  { border-left: 3px solid var(--c-agent);  }
+.module.accent-llm    { border-left: 3px solid var(--c-llm);    }
+
+/* ── State bubble ──────────────────────────────────────────────── */
+.state-note {
+  font-size: .7rem;
+  color: var(--fg-2);
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-module);
+  padding: .35rem .65rem;
+  margin-top: .55rem;
+  line-height: 1.35;
+}
+
+.state-note strong {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .68rem;
+  color: var(--c-agent);
+}
+
+/* ── Protocol badge ────────────────────────────────────────────── */
+.proto-badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .6rem;
+  font-weight: 500;
+  padding: .1em .45em;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg-2);
+  vertical-align: middle;
+  margin-left: .3em;
+}
+</style>
+</head>
+<body>
+
+<!-- ── Page header ──────────────────────────────────────────────── -->
+<header class="page-header">
+  <h1>PolicyPilot Architecture</h1>
+  <p class="tagline">Governed agentic Q&A over SEC 10-K filings — Azure Databricks + LangGraph + hybrid retrieval</p>
+  <p class="end-to-end">PolicyPilot ingests SEC 10-K filings from EDGAR, chunks and embeds them into a hybrid vector store, then routes each user question through a LangGraph agent that expands the query, retrieves and reranks the most relevant passages, and generates a cited answer — refusing to respond if no grounded citation can be found. The same codebase runs locally on a laptop via Chroma and Groq, and in production on Azure Databricks with Vector Search, Unity Catalog, and a governed AI Gateway in front of the LLM.</p>
+  <div class="chips">
+    <span class="chip chip-indigo">LangGraph</span>
+    <span class="chip chip-blue">Azure Databricks</span>
+    <span class="chip chip-green">Hybrid Search · BM25 + Dense + RRF</span>
+    <span class="chip chip-amber">Groq · Unity AI Gateway</span>
+    <span class="chip chip-violet">Streamlit · MLflow Eval</span>
+  </div>
+</header>
+
+<!-- ── Diagram ──────────────────────────────────────────────────── -->
+<main class="diagram">
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- LAYER 1 · INGESTION                                        -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="layer layer-ingest">
+    <div class="layer-head"><span class="dot"></span>Data Ingestion Pipeline</div>
+    <div class="layer-body">
+      <div class="modules" style="align-items: center;">
+        <div class="module accent-ingest" style="flex: 0 1 160px;">
+          <span class="module-name">SEC EDGAR</span>
+          <span class="module-label">Public filing API — no auth required</span>
+        </div>
+        <span class="inline-arrow">→</span>
+        <div class="module accent-ingest" style="flex: 0 1 190px;">
+          <span class="module-name">EdgarClient</span>
+          <span class="module-label">CIK lookup · 10-K fetch · HTML→text<br>Tenacity retry w/ exponential backoff</span>
+        </div>
+        <span class="inline-arrow">→</span>
+        <div class="module accent-ingest" style="flex: 0 1 200px;">
+          <span class="module-name">Section Chunker</span>
+          <span class="module-label">Detects ITEM 1/1A/7/8 boundaries<br>1200-word chunks · 200-word overlap<br>Adds <code style="font-family:monospace;font-size:.68rem">section</code> to metadata</span>
+        </div>
+        <span class="inline-arrow">→</span>
+        <div class="module accent-ingest" style="flex: 0 1 150px;">
+          <span class="module-name">Manifest</span>
+          <span class="module-label">JSON index of ingested<br>filings per ticker</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-arrow"><span>↓</span></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- LAYER 2 · VECTOR STORE                                     -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="layer layer-store">
+    <div class="layer-head"><span class="dot"></span>Vector Store <span style="font-weight:400;opacity:.75;margin-left:.4em">— VectorStore Protocol</span></div>
+    <div class="layer-body">
+      <div class="split">
+
+        <!-- Local -->
+        <div class="env">
+          <div class="env-head local">Local Dev</div>
+          <div class="env-body">
+            <div class="modules" style="align-items:center; flex-wrap: nowrap;">
+              <div class="module accent-store">
+                <span class="module-name">Chroma</span>
+                <span class="module-label">Dense vector search<br>BAAI/bge-base-en-v1.5</span>
+              </div>
+              <span class="inline-arrow">+</span>
+              <div class="module accent-store">
+                <span class="module-name">BM25Okapi</span>
+                <span class="module-label">Sparse keyword search<br>rank-bm25</span>
+              </div>
+            </div>
+            <div class="module accent-store" style="flex:none;">
+              <span class="module-name">RRF Fusion</span>
+              <span class="module-label">Reciprocal Rank Fusion (k=60)<br>Dense + sparse → ranked candidates</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cloud -->
+        <div class="env">
+          <div class="env-head cloud">Azure Databricks</div>
+          <div class="env-body">
+            <div class="module accent-store">
+              <span class="module-name">Delta Table</span>
+              <span class="module-label">policypilot_dev.filings.chunks<br>Unity Catalog · Change Data Feed</span>
+            </div>
+            <span class="inline-arrow" style="align-self:center; text-align:center; display:block;">↓</span>
+            <div class="module accent-store">
+              <span class="module-name">Databricks Vector Search</span>
+              <span class="module-label">Delta-Sync index · self-managed embeddings<br>BAAI/bge-base-en-v1.5 (768-dim)</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Cross-encoder reranker (shared) -->
+      <div class="divider"></div>
+      <div class="sub-label">Shared — Post-retrieval Reranking</div>
+      <div class="modules" style="margin-top:.45rem;">
+        <div class="module accent-store">
+          <span class="module-name">CrossEncoderReranker <span class="proto-badge">Reranker</span></span>
+          <span class="module-label">cross-encoder/ms-marco-MiniLM-L-6-v2 · scores (query, passage) pairs with full cross-attention · top_k_rerank from top_k_retrieval candidates</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-arrow"><span>↓</span></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- LAYER 3 · LANGGRAPH AGENT                                  -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="layer layer-agent">
+    <div class="layer-head"><span class="dot"></span>LangGraph Agent Pipeline</div>
+    <div class="layer-body">
+      <div class="pipeline">
+
+        <div class="pipe-node">
+          <span class="pipe-name">plan_node</span>
+          <span class="pipe-detail">LLM: question → 3 search queries + ticker<br>JSON: {"queries":[…], "ticker":"AAPL"}</span>
+          <span class="pipe-arrow">→</span>
+        </div>
+
+        <div class="pipe-node">
+          <span class="pipe-name">retrieve_node</span>
+          <span class="pipe-detail">Multi-query hybrid search<br>Dedup + score-sort → top_k_retrieval</span>
+          <span class="pipe-arrow">→</span>
+        </div>
+
+        <div class="pipe-node">
+          <span class="pipe-name">rerank_node</span>
+          <span class="pipe-detail">Cross-encoder rescoring<br>→ top_k_rerank results</span>
+          <span class="pipe-arrow">→</span>
+        </div>
+
+        <div class="pipe-node">
+          <span class="pipe-name">answer_node</span>
+          <span class="pipe-detail">LLM: numbered context → answer<br>Strict [N] citation required</span>
+          <span class="pipe-arrow">→</span>
+        </div>
+
+        <div class="pipe-node">
+          <span class="pipe-name">verify_node</span>
+          <span class="pipe-detail">Citation gate: regex [\\d+]<br>No citation → refusal (hard block)</span>
+          <span class="pipe-arrow">→</span>
+        </div>
+
+      </div>
+
+      <div class="state-note">
+        <strong>AgentState</strong> — question · search_query · search_queries · ticker_hint · results · metadata · draft_answer · final_answer · grounded
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-arrow"><span>↓</span></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- LAYER 4 · LLM CLIENT                                       -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="layer layer-llm">
+    <div class="layer-head"><span class="dot"></span>LLM Client <span style="font-weight:400;opacity:.75;margin-left:.4em">— LLMClient Protocol · tenacity retry</span></div>
+    <div class="layer-body">
+      <div class="split">
+
+        <div class="env">
+          <div class="env-head local">Local Dev</div>
+          <div class="env-body">
+            <div class="module accent-llm">
+              <span class="module-name">GroqLLMClient</span>
+              <span class="module-label">Direct Groq API call<br>GROQ_API_KEY from .env<br>Model: openai/gpt-oss-120b</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="env">
+          <div class="env-head cloud">Azure Databricks</div>
+          <div class="env-body">
+            <div class="module accent-llm">
+              <span class="module-name">DatabricksGatewayLLMClient</span>
+              <span class="module-label">POST /ai-gateway/mlflow/v1/chat/completions<br>WorkspaceClient auto-auth (service principal)</span>
+            </div>
+            <span class="inline-arrow" style="text-align:center;display:block;">↓</span>
+            <div class="module accent-llm">
+              <span class="module-name">Unity AI Gateway</span>
+              <span class="module-label">UC model service: topsecretcatalog.filings.gpt-oss<br>Guardrails · rate limits · no raw key in App env</span>
+            </div>
+            <span class="inline-arrow" style="text-align:center;display:block;">↓</span>
+            <div class="module accent-llm">
+              <span class="module-name">Groq API</span>
+              <span class="module-label">Key stored in AKV-backed Databricks secret scope</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-arrow"><span>↓</span></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- LAYER 5 · INTERFACE                                        -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="layer layer-ui">
+    <div class="layer-head"><span class="dot"></span>Interface &amp; Evaluation</div>
+    <div class="layer-body">
+      <div class="split">
+
+        <div class="env">
+          <div class="env-head local">Streamlit Chat UI</div>
+          <div class="env-body">
+            <div class="module">
+              <span class="module-name">streamlit_app.py</span>
+              <span class="module-label">Chat history · source expander<br>Grounded / refused badge<br>Local: streamlit run · Cloud: Databricks App</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="env">
+          <div class="env-head cloud">MLflow Eval Harness</div>
+          <div class="env-body">
+            <div class="module">
+              <span class="module-name">agent_eval.py</span>
+              <span class="module-label">47 golden questions · citation_present scorer<br>Databricks-hosted judges: Safety, Relevance,<br>RetrievalGroundedness · CI-gated in ci.yml</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-arrow"><span>↓</span></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- LAYER 6 · INFRASTRUCTURE & CONFIG                         -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="layer layer-infra">
+    <div class="layer-head"><span class="dot"></span>Infrastructure &amp; Configuration</div>
+    <div class="layer-body">
+
+      <div class="sub-label" style="margin-bottom:.55rem;">Configuration</div>
+      <div class="modules" style="margin-bottom:.75rem;">
+        <div class="module">
+          <span class="module-name">Pydantic Settings</span>
+          <span class="module-label">PP_ENV · GROQ_API_KEY · DATABRICKS_HOST<br>top_k_retrieval · top_k_rerank · hybrid_alpha · multi_query<br>Reads .env · validated at startup</span>
+        </div>
+      </div>
+
+      <div class="sub-label" style="margin-bottom:.55rem;">Azure Databricks Cloud</div>
+      <div class="infra-row">
+        <div class="infra-item">
+          <span class="infra-name">Databricks Asset Bundle</span>
+          <span class="infra-detail">databricks.yml · deploy config</span>
+        </div>
+        <div class="infra-item">
+          <span class="infra-name">Unity Catalog</span>
+          <span class="infra-detail">policypilot_dev.filings.chunks</span>
+        </div>
+        <div class="infra-item">
+          <span class="infra-name">Azure Key Vault</span>
+          <span class="infra-detail">AKV-backed secret scope · Groq key</span>
+        </div>
+        <div class="infra-item">
+          <span class="infra-name">GitHub Actions CI/CD</span>
+          <span class="infra-detail">ci.yml (eval) · cd.yml (bundle deploy)</span>
+        </div>
+        <div class="infra-item">
+          <span class="infra-name">GitHub OIDC Federation</span>
+          <span class="infra-detail">Entra ID app reg → keyless deploy</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+</body>
+</html>
