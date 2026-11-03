@@ -15,9 +15,9 @@ from policypilot.config import (
     VECTOR_SEARCH_INDEX,
     get_settings,
 )
-from policypilot.ingestion.chunker import chunk_filing
+from policypilot.ingestion.chunker import Chunk, chunk_filing
 from policypilot.ingestion.edgar_client import EdgarClient
-from policypilot.ingestion.manifest import record_filing
+from policypilot.ingestion.manifest import record_filings
 from policypilot.retrieval.base import VectorStore
 from policypilot.retrieval.local_chroma import LocalChromaVectorStore
 
@@ -36,6 +36,26 @@ def get_vector_store() -> VectorStore:
     )
 
 
+def _unpack_chunks(chunks: list[Chunk]) -> tuple[list[str], list[str], list[dict]]:
+    """Single-pass fan-out of Chunk fields into the parallel lists upsert expects."""
+    ids: list[str] = []
+    texts: list[str] = []
+    metadatas: list[dict] = []
+    for c in chunks:
+        ids.append(c.id)
+        texts.append(c.text)
+        metadatas.append(
+            {
+                "ticker": c.ticker,
+                "company": c.company,
+                "filing_date": c.filing_date,
+                "accession_number": c.accession_number,
+                "chunk_index": c.chunk_index,
+            }
+        )
+    return ids, texts, metadatas
+
+
 def run_ingestion(tickers: list[str] | None = None) -> int:
     """Fetch each ticker's latest 10-K, chunk it, embed it, and upsert into the
     configured vector store. Returns the total number of chunks indexed."""
@@ -48,6 +68,7 @@ def run_ingestion(tickers: list[str] | None = None) -> int:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     total_chunks = 0
+    recorded: dict[str, dict] = {}
     for ticker in tickers:
         logger.info("Fetching CIK for %s", ticker)
         cik = client.get_cik_for_ticker(ticker)
@@ -63,26 +84,17 @@ def run_ingestion(tickers: list[str] | None = None) -> int:
         )
         text = client.download_filing_text(filing)
         (RAW_DIR / f"{ticker}_{filing['accession_number']}.txt").write_text(text)
-        record_filing(ticker, filing)
+        recorded[ticker] = filing
 
         chunks = chunk_filing(ticker, filing, text)
         logger.info("Chunked %s into %d chunks", ticker, len(chunks))
 
-        store.upsert(
-            ids=[c.id for c in chunks],
-            texts=[c.text for c in chunks],
-            metadatas=[
-                {
-                    "ticker": c.ticker,
-                    "company": c.company,
-                    "filing_date": c.filing_date,
-                    "accession_number": c.accession_number,
-                    "chunk_index": c.chunk_index,
-                }
-                for c in chunks
-            ],
-        )
+        if chunks:
+            ids, texts, metadatas = _unpack_chunks(chunks)
+            store.upsert(ids=ids, texts=texts, metadatas=metadatas)
         total_chunks += len(chunks)
+
+    record_filings(recorded)
 
     logger.info(
         "Ingestion complete: %d chunks indexed across %d tickers", total_chunks, len(tickers)

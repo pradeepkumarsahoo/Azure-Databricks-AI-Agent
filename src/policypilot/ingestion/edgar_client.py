@@ -15,12 +15,14 @@ SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{document}"
 
 _RETRYABLE = (requests.HTTPError, requests.ConnectionError, requests.Timeout)
+_STRIPPED_TAGS = ("script", "style")
 
 
 class EdgarClient:
     def __init__(self, user_agent: str):
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": user_agent})
+        self._ticker_cik_map: dict[str, int] | None = None
 
     @retry(
         retry=retry_if_exception_type(_RETRYABLE),
@@ -34,19 +36,32 @@ class EdgarClient:
         time.sleep(0.15)  # stay well under SEC's request-rate guidance
         return resp
 
+    def _load_ticker_cik_map(self) -> dict[str, int]:
+        """Fetch SEC's full ticker→CIK table once and reuse it for subsequent lookups.
+
+        The upstream JSON is ~1 MB and the same for every ticker, so hitting it once
+        per client (not once per ticker) is a strict win on both latency and SEC quota.
+        """
+        if self._ticker_cik_map is None:
+            data = self._get(TICKERS_URL).json()
+            self._ticker_cik_map = {
+                entry["ticker"].upper(): int(entry["cik_str"]) for entry in data.values()
+            }
+        return self._ticker_cik_map
+
     def get_cik_for_ticker(self, ticker: str) -> int:
-        data = self._get(TICKERS_URL).json()
-        ticker = ticker.upper()
-        for entry in data.values():
-            if entry["ticker"] == ticker:
-                return int(entry["cik_str"])
-        raise ValueError(f"No CIK found for ticker {ticker!r}")
+        mapping = self._load_ticker_cik_map()
+        try:
+            return mapping[ticker.upper()]
+        except KeyError:
+            raise ValueError(f"No CIK found for ticker {ticker!r}") from None
 
     def get_recent_10k(self, cik: int) -> dict:
         """Return metadata for the most recent 10-K filing for a company."""
         data = self._get(SUBMISSIONS_URL.format(cik=cik)).json()
         recent = data["filings"]["recent"]
-        for i, form in enumerate(recent["form"]):
+        forms = recent["form"]
+        for i, form in enumerate(forms):
             if form == "10-K":
                 return {
                     "cik": cik,
@@ -67,8 +82,7 @@ class EdgarClient:
         )
         html = self._get(url).text
         soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style"]):
+        for tag in soup(_STRIPPED_TAGS):
             tag.decompose()
         text = soup.get_text(separator="\n")
-        lines = [line.strip() for line in text.splitlines()]
-        return "\n".join(line for line in lines if line)
+        return "\n".join(filter(None, (line.strip() for line in text.splitlines())))
